@@ -1,121 +1,69 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/O7YpThds)
-# Entrega: Redes en Docker. Despliegue de tomcat + nginx
+# Despliegue de Aplicación Java (Tomcat) con Nginx como Proxy Inverso
+
+Este proyecto demuestra cómo desplegar una aplicación web Java (`.war`) en un servidor Tomcat, utilizando Nginx como proxy inverso para exponer la aplicación al exterior. La infraestructura se gestiona con `podman-compose`, adaptada para un entorno `rootless` (sin privilegios de superusuario) en Fedora.
+
+## Descripción
+
+El objetivo es crear un entorno con dos contenedores:
+1.  **`aplicacionjava`**: Un contenedor con `tomcat:9.0` que ejecuta la aplicación Java de ejemplo (`sample.war`).
+2.  **`proxy`**: Un contenedor con `nginx` que actúa como proxy inverso, redirigiendo el tráfico externo desde un puerto no privilegiado (1024) al puerto 8080 del contenedor Tomcat.
+
+Ambos servicios se conectan a través de una red bridge definida por el usuario para asegurar la comunicación.
+
+## Estructura del Proyecto
+
+El directorio de trabajo contiene los siguientes ficheros:
+
+*   `sample.war`: La aplicación web de ejemplo para desplegar en Tomcat.
+*   `default.conf`: Fichero de configuración para Nginx.
+*   `docker-compose.yaml`: Fichero de `podman-compose` para orquestar los servicios.
+*   `README.md`: Este fichero.
+
+## Configuración
+
+### Nginx (`default.conf`)
+
+La configuración de Nginx está definida para escuchar en el puerto 80 (dentro del contenedor) y redirigir todas las peticiones a la aplicación Tomcat.
+
+![Nginx config](screenshots/default_conf.png)
+
+Se utiliza el nombre del servicio `aplicacionjava` para la resolución DNS interna entre los contenedores.
+
+### Podman Compose (`docker-compose.yaml`)
+
+Este fichero ha sido modificado a partir del tutorial original para funcionar en un entorno `podman` rootless, evitando el error de puertos privilegiados.
+
+![Docker yaml](screenshots/yaml_file_create.png)
+**Cambios clave:**
+*   **`ports: - "1024:80"`**: Se mapea el puerto 1024 del host (no privilegiado) al puerto 80 del contenedor Nginx.
+*   **`networks: - app-net`**: Ambos servicios usan una red explícita llamada `app-net` para garantizar una comunicación estable.
+*   **`depends_on: - aplicacionjava`**: Se asegura que el contenedor de la aplicación se inicie antes que el proxy.
+*   Se eliminaron los `container_name` para una mejor gestión por parte de `podman-compose`.
+
+## Despliegue y Verificación
+
+1.  **Levantar los servicios:**
+    ![Podman up](screenshots/podman_up.png)  
+
+2.  **Comprobar los contenedores:**
+    ![Podman ps](screenshots/podman-compose_ps.png)  
+
+    Se puede  ver los dos contenedores (`tomcat_aplicacionjava_1` y `tomcat_proxy_1`) en estado "Up".
+
+3.  **Acceder a la aplicación:**
+    ![Navegador](screenshots/hello_response_web_acces.png)
 
 ## Parte A
 
-En este proyecto vamos a desplegar una aplicación muy sencilla en un servidor de aplicación Tomcat, a la que accederemos utilizando un proxy inverso nginx. En este proyecto, además de trabajar con las redes de tipo bridge definida por el usuario, vamos a usar bind mount para montar los ficheros de configuración y de despliegue en los contenedores.
+![List config files](screenshots/locar_tomcat_directry_ls.png)  
 
-## Desplegando tomcat
+**Archivos en el directorio de Tomcat dentro del contenedor:**  
+El uso de los archivos default.conf y sample.war son los mismos que se usan para levantar el sevicio con podman-compose.  
+A excepcion del .conf que se tuvo que modificar ya que los usuarios sin privilegios (rootless) no pueden vincular puertos por debajo del 1024. El servicio de nginx en tu configuración está
+intentando usar el puerto 80.
 
-Antes de hacer el despliegue del primer contenedor, vamos a crear una red bridge para conectar los contenedores:
+1. Creación de  una red bridge para conectar los contenedores:
+![Network](screenshots/networ_create.png)  
 
-```bash
-$ docker network create red_tomcat
-```
-
-A continuación vamos a crear un contenedor a partir de la imagen [`tomcat`](https://hub.docker.com/_/tomcat). En la documentación podemos ver que el directorio `/usr/local/tomcat/webapps/` es donde tenemos que poner el fichero de despliegue `war` (vamos a usar **bind mount** para montar el fichero war en el directorio). No vamos a mapear puerto porque no vamos a acceder a este contenedor desde el exterior.
-
-Tenemos un directorio donde tenemos el fichero war (puedes encontrar estos ficheros en el [repositorio github](https://github.com/maximofernandezriera/tomcat-nginx/)):
-
-```bash
-$ cd tomcat
-~/tomcat$ ls
-default.conf  sample.war
-```
-
-Y creamos el contenedor conectada a nuestra nueva red:
-
-```bash
-$ docker run -d --name aplicacionjava \
-                --network red_tomcat \
-                -v /home/vagrant/tomcat/sample.war:/usr/local/tomcat/webapps/sample.war:ro \
-                tomcat:9.0
-```
-
-## Desplegando nginx como proxy inverso
-
-En el directorio de trabajo tenemos también la configuración de nginx para que funcione como proxy inverso:
-
-```bash
-server {
-    listen       80;
-    listen  [::]:80;
-    server_name  localhost;
-
-    location / {
-        root   /usr/share/nginx/html;
-	proxy_pass http://aplicacionjava:8080/sample/;
-    }
-    error_page   500 502 503 504  /50x.html;
-    location = /50x.html {
-        root   /usr/share/nginx/html;
-    }
-}
-```
-Como vemos para realizar el proxy inverso usamos la directiva `proxy_pass`indicando la dirección que nos ofrece tomcat, en este caso usamos el nombre del contenedor anterior (`aplicacionjava`) que será resuelto por el servidor DNS interno, usando el puerto estándar de tomcat el 8080 y el directorio `sample` donde se ha desplegado la aplicación. Para la creación del contenedor de nginx:
-
-```bash
-$ docker run -d --name proxy \
-                -p 80:80 \
-                --network red_tomcat \
-                -v /home/vagrant/tomcat/default.conf:/etc/nginx/conf.d/default.conf:ro \
-                nginx
-```
-
-Y al acceder la ip de nuestro host:
-
-![tomcat](tomcat.png)
-
----
-
-## Parte B. Despliegue de tomcat + nginx  con Docker compose
-
-En esta parte del proyecto vamos a desplegar con Docker Compose la aplicación Java con Tomcat y nginx como proxy inverso que vimos en la parte A.
-
-Puedes encontrar el fichero `docker-compose.yaml` en en este [directorio](https://github.com/maximofernandezriera/tomcat-nginx/) del repositorio. 
-
-El fichero `docker-compose.yaml` sería:
-
-```yaml
-version: '3.1'
-services:
-  aplicacionjava:
-    container_name: tomcat
-    image: tomcat:9.0
-    restart: always
-    volumes:
-      - ./sample.war:/usr/local/tomcat/webapps/sample.war:ro
-  proxy:
-    container_name: nginx
-    image: nginx
-    ports:
-      - 80:80
-    volumes:
-      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
-```
-
-Como podemos ver en el directorio donde tenemos guardado el `docker-compose.yaml`, tenemos los dos ficheros necesarios para la configuración: `sample.war` y `default.conf`.
-
-Creamos el escenario:
-
-```bash
-$ docker compose up -d
-...
-```
-
-Comprobar que los contenedores están funcionando:
-
-```bash
-$ docker compose ps
-...
-```
-
-Y acceder al puerto 80 de nuestra IP para ver la aplicación.
-
-# Entrega
-
-- Capturas descriptivas.
-
-# Fecha de entrega
-
-- Viernes 14 de noviembre.
+2. Despliegue del contenedor Tomcat con la aplicación Java y nginx como proxy inverso:
+![Tomcat](screenshots/docker_ps.png)  
